@@ -1,7 +1,9 @@
+import json
+
 import click
 import pytest
 from click.testing import CliRunner
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from pydanclick import from_pydantic
 from tests.base_models import Bar, Baz, Foo, Foos, MultipleFoos, NestedFoos, Obj, OptionalFoos, UnionFoos
@@ -125,3 +127,48 @@ def test_unpack_list_with_nested_list():
     result = CliRunner().invoke(cli, ["--nested-foos-a", "2", "--no-nested-foos-b", "--nested-foos-a", "3"])
     assert result.exit_code == 0
     assert NestedFoos.model_validate_json(result.output) == NestedFoos(nested=Foos(foos=[Foo(a=2, b=False), Foo(a=3)]))
+
+
+def test_validation_alias_simple():
+    """Test that validation_alias works for simple models."""
+
+    class ModelWithAlias(BaseModel):
+        field_with_alias: str = Field(..., validation_alias="field_alias")
+        field_without_alias: str
+
+    @click.command()
+    @from_pydantic("model", ModelWithAlias)
+    def cli(model: ModelWithAlias):
+        click.echo(model.model_dump_json())
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--field-with-alias", "value1", "--field-without-alias", "value2"])
+    assert result.exit_code == 0
+
+    output_data = json.loads(result.output)
+    assert output_data["field_with_alias"] == "value1"
+    assert output_data["field_without_alias"] == "value2"
+
+
+def test_validation_alias_nested():
+    """Test that validation_alias works for nested models."""
+
+    class NestedModel(BaseModel):
+        inner_field: str = Field(..., validation_alias="inner_alias")
+
+    class ParentModel(BaseModel):
+        name: str
+        nested: NestedModel
+
+    @click.command()
+    @from_pydantic("parent", ParentModel)
+    def cli(parent: ParentModel):
+        click.echo(parent.model_dump_json())
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--name", "parent_name", "--nested-inner-field", "nested_value"])
+    assert result.exit_code == 0
+
+    output_data = json.loads(result.output)
+    assert output_data["name"] == "parent_name"
+    assert output_data["nested"]["inner_field"] == "nested_value"

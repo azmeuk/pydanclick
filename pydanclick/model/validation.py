@@ -13,13 +13,44 @@ from itertools import zip_longest
 from typing import Any
 
 from pydantic import BaseModel
+from pydantic.fields import FieldInfo
 from typing_extensions import TypeVar
 
+from pydanclick.model.field_collection import _get_pydantic_fields, _is_pydantic_model
 from pydanclick.types import ArgumentName, DottedFieldName
 
 M = TypeVar("M", bound=BaseModel)
 V = TypeVar("V")
 K = TypeVar("K", bound=str)
+
+
+def _resolve_validation_aliases(data: dict[str, Any], model: type[BaseModel]) -> dict[str, Any]:
+    """Apply validation aliases recursively to a nested data dictionary.
+
+    Args:
+        data: nested dictionary with field names as keys
+        model: Pydantic model type to get field information from
+
+    Returns:
+        nested dictionary with field names replaced by their validation aliases where applicable
+    """
+    fields = _get_pydantic_fields(model)
+    validation_aliases = {}
+    for field_name, field_info in fields.items():
+        if field_info.validation_alias is not None:
+            validation_aliases[field_name] = field_info.validation_alias
+
+    result = {}
+    for key, value in data.items():
+        alias_key = validation_aliases.get(key, key)
+
+        if isinstance(value, dict) and key in fields:
+            field_info = fields[key]
+            if isinstance(field_info, FieldInfo) and _is_pydantic_model(field_info.annotation):
+                value = _resolve_validation_aliases(value, field_info.annotation)
+
+        result[alias_key] = value
+    return result
 
 
 def model_validate_kwargs(
@@ -57,6 +88,9 @@ def model_validate_kwargs(
         # provide a default value (if there is one). To pass an empty list explicitly, turn off unpacking and pass '[]'
         if not raw_model[name]:
             del raw_model[name]
+
+    raw_model = _resolve_validation_aliases(raw_model, model)
+
     return model.model_validate(raw_model)
 
 
